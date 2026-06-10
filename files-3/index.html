@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Resource lockout</title>
+<style>
+  :root {
+    --green: #1d9e75; --green-bg: #e1f5ee;
+    --red: #e24b4a; --red-bg: #fcebeb;
+    --ink: #1a1a18; --muted: #6b6a64; --line: rgba(0,0,0,.12);
+    --surface: #fff; --page: #f6f5f0;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; background: var(--page); color: var(--ink);
+    margin: 0; padding: 24px; line-height: 1.6; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 16px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 22px; margin-bottom: 16px; }
+  .status { display: flex; align-items: center; gap: 16px; }
+  .light { width: 52px; height: 52px; border-radius: 50%; flex-shrink: 0; transition: background .2s; }
+  .light.free { background: var(--green); box-shadow: 0 0 0 5px var(--green-bg); }
+  .light.locked { background: var(--red); box-shadow: 0 0 0 5px var(--red-bg); }
+  .status-line { font-size: 18px; font-weight: 600; margin: 0; }
+  .status-sub { font-size: 13px; color: var(--muted); margin: 2px 0 0; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input[type=text] { flex: 1; min-width: 180px; height: 40px; padding: 0 12px; font-size: 15px;
+    border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  button { height: 40px; padding: 0 18px; font-size: 15px; font-weight: 500; border-radius: 8px;
+    border: 1px solid var(--line); background: #fff; cursor: pointer; }
+  button.danger { border-color: var(--red); color: var(--red); }
+  button.go { border-color: var(--green); color: var(--green); }
+  button:active { transform: scale(.98); }
+  .err { color: var(--red); font-size: 13px; min-height: 18px; margin: 8px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 10px 12px; font-weight: 600; color: var(--muted); background: var(--page); }
+  td { padding: 10px 12px; border-top: 1px solid var(--line); }
+  .active-tag { color: var(--red); font-weight: 500; }
+  .label { font-size: 13px; color: var(--muted); font-weight: 600; margin: 0 0 6px; }
+  .foot { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .tablecard { padding: 0; overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 id="resource-name">Resource lockout</h1>
+
+  <div class="card">
+    <div class="status">
+      <div id="light" class="light free"></div>
+      <div>
+        <p id="status-line" class="status-line">No users logged in</p>
+        <p id="status-sub" class="status-sub">The resource is free to use.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="claim-row" class="row">
+      <input id="username" type="text" placeholder="Your name" maxlength="80" />
+      <button class="danger" onclick="claim()">Lock out</button>
+    </div>
+    <div id="release-row" class="row" style="display:none">
+      <button class="go" onclick="release()">Log out / release lock</button>
+    </div>
+    <p id="err" class="err"></p>
+  </div>
+
+  <p class="label">Session log</p>
+  <div class="card tablecard">
+    <table>
+      <thead><tr><th style="width:34%">User</th><th style="width:33%">Logged in</th><th style="width:33%">Logged out</th></tr></thead>
+      <tbody id="log"><tr><td colspan="3" style="text-align:center;color:var(--muted)">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="foot"><span id="sync"></span><span>Auto-refreshes every 3s</span></div>
+</div>
+
+<script>
+const fmt = ts => ts ? new Date(ts).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let mine = localStorage.getItem('lockout_name') || '';
+
+function render(d) {
+  document.title = d.resource + ' — lockout';
+  document.getElementById('resource-name').textContent = d.resource;
+  const light = document.getElementById('light');
+  if (d.locked) {
+    light.className = 'light locked';
+    document.getElementById('status-line').textContent = (d.user || 'Someone') + ' is logged in';
+    document.getElementById('status-sub').textContent = 'Locked since ' + fmt(d.since) + '.';
+    document.getElementById('claim-row').style.display = 'none';
+    document.getElementById('release-row').style.display = 'flex';
+  } else {
+    light.className = 'light free';
+    document.getElementById('status-line').textContent = 'No users logged in';
+    document.getElementById('status-sub').textContent = 'The resource is free to use.';
+    document.getElementById('claim-row').style.display = 'flex';
+    document.getElementById('release-row').style.display = 'none';
+  }
+  const body = document.getElementById('log');
+  body.innerHTML = d.log.length ? d.log.map(e =>
+    `<tr><td>${esc(e.user)}</td><td>${fmt(e.in)}</td><td>${e.out ? fmt(e.out) : '<span class="active-tag">active</span>'}</td></tr>`
+  ).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--muted)">No sessions yet</td></tr>';
+  document.getElementById('sync').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+async function refresh() {
+  try { const r = await fetch('/api/state'); render(await r.json()); } catch {}
+}
+
+async function claim() {
+  const name = document.getElementById('username').value.trim();
+  const err = document.getElementById('err'); err.textContent = '';
+  if (!name) { err.textContent = 'Enter your name first.'; return; }
+  localStorage.setItem('lockout_name', name); mine = name;
+  const r = await fetch('/api/claim', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ user: name }) });
+  const d = await r.json();
+  if (r.status === 409) { err.textContent = (d.user || 'Someone') + ' already has the lock.'; render(d); return; }
+  render(d);
+}
+
+async function release() {
+  const r = await fetch('/api/release', { method:'POST' });
+  render(await r.json());
+}
+
+if (mine) document.getElementById('username').value = mine;
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

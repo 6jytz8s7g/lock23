@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: wrl-lockout
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: RESOURCE_NAME
+        value: "Shared resource"
+      - key: NODE_VERSION
+        value: "22.11.0"
